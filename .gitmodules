@@ -1,0 +1,3 @@
+[submodule "RI_render_DPR"]
+	path = RI_render_DPR
+	url = https://github.com/csvt32745/RI_render_DPR.git
