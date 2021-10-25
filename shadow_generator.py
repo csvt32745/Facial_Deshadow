@@ -155,3 +155,6 @@ if __name__ == '__main__':
     if defected_face:
         with open('defected_shadow.list', 'w') as f:
             f.writelines([i+"\n" for i in defected_face])
+
+    with open(os.path.join(relight_root, 'data.list')) as f:
+        f.writelines([p + "\n" for p in face_list])
