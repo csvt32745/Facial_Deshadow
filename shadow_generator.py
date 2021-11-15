@@ -125,11 +125,18 @@ if __name__ == '__main__':
 
         parser_input = cv2.imread(os.path.join(relight_path, dataset_img_name + f"_00.png"))
         face = face_predictor(parser_input, rgb=False)
+
+        if len(face) > 1:
+            print(f"{img_name} has multiple({len(face)}) face detection!!")
+            defected_face.append(img_name)
+
+        elif len(face) == 0:
+            print(f"{img_name} cannot detect face!!")
+            defected_face.append(img_name)
+            continue
+
         label = face_parser.predict_img(parser_input, face, rgb=False)
         seg_mask = ~np.isin(label, [0, 10, 8, 13])
-        if len(seg_mask) > 1:
-            print(f"{img_name} has multiple({len(seg_mask)}) face detection!!")
-            defected_face.append(img_name)
         seg_mask = seg_mask[0].flatten()
 
         """ Per light processing """
