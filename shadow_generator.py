@@ -163,5 +163,5 @@ if __name__ == '__main__':
         with open('defected_shadow.list', 'w') as f:
             f.writelines([i+"\n" for i in defected_face])
 
-    with open(os.path.join(relight_root, 'data.list')) as f:
+    with open(os.path.join(relight_root, 'data.list'), 'w') as f:
         f.writelines([p + "\n" for p in face_list])
