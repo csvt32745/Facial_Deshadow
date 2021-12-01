@@ -4,6 +4,7 @@ import cv2
 import torch
 from torch.utils.data.dataset import Dataset
 from torchvision import transforms as T
+from torchvision.datasets import ImageFolder
 from torch.utils.data.dataloader import DataLoader
 from PIL import Image
 
@@ -11,7 +12,7 @@ from src.utils import denormalize_img_rgb, RGB2LAB
 
 default_transform = T.Compose(
     [
-        T.Resize(256),
+        T.Resize((256, 256)),
         T.Lambda(RGB2LAB),
         T.ToTensor(),
         # T.Normalize(mean=[0.485, 0.456, 0.406],
@@ -46,8 +47,25 @@ class DPRShadowDataset(Dataset):
         img_shadow = self.transform(img_shadow)
         img_orig = self.transform(img_orig)
         return img_shadow, img_orig, sh_light
-    
+
+
+
+class UnsupervisedDataset(Dataset):
+    def __init__(self, root, img_list=None, transform=default_transform):
+        # root/imgHQxxxxx/
+        self.img_list = os.listdir(root) if img_list is None else img_list
+        self.img_name = list(filter(lambda p: os.path.splitext(p)[1] in ['.jpg', '.png', '.jpeg'], self.img_list))
+        self.img_list = [os.path.join(root, p) for p in self.img_name]
         
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.img_list)
+
+    def __getitem__(self, idx):
+        img = Image.open(self.img_list[idx])
+        img = self.transform(img)
+        return img
 
 # TODO: data augmentation for shadow img producing
 

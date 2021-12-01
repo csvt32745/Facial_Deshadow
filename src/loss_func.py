@@ -30,7 +30,7 @@ class GeneratorLoss(nn.Module):
         # dssim = self.dssim(x, GT)
 
         # loss = l2 + adv
-        loss = recon + perceptual + adv + edge
+        loss = recon + perceptual + adv*0.1 + edge
 
         if ret_dict:
             loss_dict = {
@@ -65,9 +65,12 @@ class GeneratorLoss(nn.Module):
 class NonSaturaingLoss(nn.Module):
     def __init__(self):
         super().__init__()
+        self.loss_fn = nn.MSELoss()
 
     def forward(self, x):
-        return (-torch.log(torch.sigmoid(x))).mean(dim=[1, 2, 3]).mean()
+        # return (-torch.log(torch.sigmoid(x))).mean(dim=[1, 2, 3]).mean()
+        # TEST
+        return self.loss_fn(x, torch.ones_like(x, device='cuda'))
 
 class SobelLoss(nn.Module):
     def __init__(self, loss_fn):

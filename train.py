@@ -14,7 +14,7 @@ from torch.utils.data.dataloader import DataLoader
 
 from config import config_parser_train
 from src.logger import WBLogger
-from src.dataset import DPRShadowDataset
+from src.dataset import DPRShadowDataset, UnsupervisedDataset
 from src.train_code import BasicGANTrainer
 from src.network import *
 from src.defineHourglass_512_gray_skip import HourglassNet
@@ -53,27 +53,31 @@ def main(config):
     D = Net(
         NLayerDiscriminator(1, ndf=64),
         # ResNet(models.resnet18(pretrained=True)),
-        opt_func, nn.BCEWithLogitsLoss(), scheduler_func=sch_func
+        # TEST nn.BCEWithLogitsLoss() -> MSE
+        opt_func, nn.MSELoss(), scheduler_func=sch_func
     )
     G = G.cuda()
+    # G = G.loadModel('/home/csvt32745/relight/models/2021_1025_02:25:03/4_G.pt').cuda()
     D = D.cuda()
 
-    def get_dataloader(batch_size, shuffle, n_workers, root, img_list=None):
-        dataset = DPRShadowDataset(root, img_list)
+    def get_dataloader(batch_size, shuffle, n_workers, dataset):
         dataloader = DataLoader(dataset, batch_size, shuffle, num_workers=n_workers, pin_memory=True)
         return dataloader
 
     n_workers = 16
     data_split = json.load(open(os.path.join(config.dataset_path, config.data_split_path))) if config.dataset_path else None
-    train_loader = get_dataloader(BATCH_SIZE, True, n_workers, config.dataset_path, data_split['train'] if data_split else None)
-    valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, config.dataset_path, data_split['valid'] if data_split else None)
+    train_loader = get_dataloader(BATCH_SIZE, True, n_workers,
+        DPRShadowDataset(config.dataset_path, data_split['train'] if data_split else None))
+    valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, 
+        DPRShadowDataset(config.dataset_path, data_split['valid'] if data_split else None))
+    unsup_loader = get_dataloader(BATCH_SIZE, True, n_workers, UnsupervisedDataset('ffhq'))
 
     
     trainer = BasicGANTrainer(
         config, logger, config.exp_name,
-        G, D, train_loader, valid_loader,
-        0, EPOCH,
-        now_time, log_interval=1, 
+        G, D, train_loader, valid_loader, unsup_loader,
+        10, EPOCH,
+        now_time, log_interval=len(train_loader)//2, 
         save_path=config.save_model_path
     )
     trainer.Train()

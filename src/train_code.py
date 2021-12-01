@@ -18,7 +18,7 @@ class BasicGANTrainer():
     def __init__(self, 
         config, logger: WBLogger, model_name,
         G: Net, D: Net,
-        train_loader, valid_loader,
+        train_loader, valid_loader, unsup_loader,
         pretrain, epoch, now_time, log_interval=100,
         save_path="./models"):
         
@@ -34,6 +34,7 @@ class BasicGANTrainer():
 
         self.train_loader = train_loader
         self.valid_loader = valid_loader
+        self.unsup_loader = unsup_loader
 
         self.losser = DictLosser()
         self.image_buffer = {}
@@ -71,6 +72,7 @@ class BasicGANTrainer():
         self.logger.info("Training")
         for epoch in range(self.epoch):
             self.CalOpenSkip(epoch)
+            self.logger.info("Skip count: %d" % self.open_skip)
             self.EpochTrain(epoch)
             self.EpochValidation(epoch)
             if (epoch+1) % 5 == 0 or (epoch+1) == self.epoch:
@@ -87,7 +89,7 @@ class BasicGANTrainer():
             b = x.size(0)
             
             # Train D
-            fake = self.G(x, skip_count=0)
+            fake = self.G(x, skip_count=999)
             # lossG_recon = crit(fake, x)
             loss = self.G.crit.recon(fake, x)
             self.G.step(loss)
@@ -115,21 +117,25 @@ class BasicGANTrainer():
         self.G.train()
         self.losser.clear()
 
-        for i, x in enumerate(tqdm(self.train_loader, position=0, leave=True, dynamic_ncols=True)):
+        for i, (x, u) in enumerate(zip(
+            tqdm(self.train_loader, position=0, leave=True, dynamic_ncols=True),
+            self.unsup_loader
+            )):
             x_, real_, sh = x
             real = real_[:, [0]].cuda()
             x = x_[:, [0]].cuda()
             sh = sh.cuda()
+            u = u[:, [0]].cuda()
+            
 
             # Train D
             fake = self.G(x, skip_count=self.open_skip)
-            prob_real = self.D(real)
+            # prob_real = self.D(real)
+            prob_real = self.D(u)
             prob_fake = self.D(fake.detach())
-            label_fake = torch.zeros_like(prob_fake, device='cuda')
-            label_real = torch.ones_like(prob_fake, device='cuda')
 
-            lossD_real = self.D.crit(prob_real, label_real)
-            lossD_fake = self.D.crit(prob_fake, label_fake)
+            lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
+            lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
             loss = lossD_fake + lossD_real
             self.D.step(loss)
 
@@ -171,16 +177,21 @@ class BasicGANTrainer():
         self.losser.clear()
 
         log_flg = True
-        for i, x in enumerate(tqdm(self.valid_loader, position=0, leave=True, dynamic_ncols=True)):
+        for i, (x, u) in enumerate(zip(
+            tqdm(self.valid_loader, position=0, leave=True, dynamic_ncols=True),
+            self.unsup_loader
+            )):
             x_, real_, sh = x
             real = real_[:, [0]].cuda()
             x = x_[:, [0]].cuda()
+            u = u[:, [0]].cuda()
             sh = sh.cuda()
             
             fake = self.G(x, skip_count=self.open_skip)
-            prob_real = self.D(real)
+            # prob_real = self.D(real)
+            prob_real = self.D(u)
             prob_fake = self.D(fake)
-            lossD_real = self.D.crit(prob_real, torch.ones_like(prob_fake, device='cuda'))
+            lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
             lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
             _, loss_dict = self.G.crit(fake, real, prob_fake)
             

@@ -15,9 +15,11 @@ class Net():
 
     def saveModel(self, path):
         torch.save(self.net.state_dict(), path)
+        return self
     
     def loadModel(self, path):
         self.net.load_state_dict(torch.load(path))
+        return self
     
     def __call__(self, *args, **kwargs):
         return self.net(*args, **kwargs)
