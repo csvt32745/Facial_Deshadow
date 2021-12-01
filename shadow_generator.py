@@ -73,9 +73,10 @@ def fuse_shadow(img_orig, mask, shadow, intensity=0.4):
 
 
 if __name__ == '__main__':
-    
+    # list_name = 'RI_render_DPR/data.list'
+    list_name = 'shadow.list'
     face_list = []
-    with open('RI_render_DPR/data.list') as f:
+    with open(list_name) as f:
         face_list += f.readlines()
     face_list = sorted(face_list)
 
@@ -88,6 +89,7 @@ if __name__ == '__main__':
 
     tqdm_face_list = tqdm(face_list, ascii=True, dynamic_ncols=True)
     defected_face = []
+    accepted_face = []
     for file_name in tqdm_face_list:
         # imgHQ00000_00.png
         img_name = file_name.split(".")[0] 
@@ -97,9 +99,13 @@ if __name__ == '__main__':
         path = os.path.join(result_root, img_name)
         relight_path = os.path.join(relight_root, dataset_img_name)
 
-        if os.path.isfile(os.path.join(relight_path, dataset_img_name + f"_shadowmask_04.png")):
-            continue
-
+        # if os.path.isfile(os.path.join(relight_path, dataset_img_name + f"_shadowmask_04.png")):
+        #     accepted_face.append(img_name)
+        #     continue
+ 
+        # else: # for generating defection list
+        #     defected_face.append(img_name)
+        #     continue
         """
         Processing before warping
         """
@@ -153,15 +159,17 @@ if __name__ == '__main__':
             shadow_mask, warp_shadow = get_warped_soft_shadow(shape, img_shadow, warp_uv, filter_size=51)
 
             img_res = fuse_shadow(img_orig, seg_mask, warp_shadow)[..., ::-1]
+            np.save(os.path.join(relight_path, dataset_img_name + f"_faceregion.npy"),
+                seg_mask.reshape(shape))
             cv2.imwrite(os.path.join(relight_path, dataset_img_name + f"_shadow_{light_id}.png"),
                 img_res*255)
             cv2.imwrite(os.path.join(relight_path, dataset_img_name + f"_shadowmask_{light_id}.png"),
                 shadow_mask.reshape(shape)*255)
             # raise
+        accepted_face.append(img_name)
 
-    if defected_face:
-        with open('defected_shadow.list', 'w') as f:
-            f.writelines([i+"\n" for i in defected_face])
+    with open('defected_shadow.list', 'w') as f:
+        f.writelines([i+"\n" for i in defected_face])
 
-    with open(os.path.join(relight_root, 'data.list'), 'w') as f:
-        f.writelines([p + "\n" for p in face_list])
+    with open('accepted_shadow.list', 'w') as f:
+        f.writelines([p + "\n" for p in accepted_face])
