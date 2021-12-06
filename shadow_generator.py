@@ -54,7 +54,7 @@ def fuse_shadow(img_orig, mask, shadow, intensity=0.4):
     """ 
     img_orig: original image
     mask: human mask of the image
-    shadow: array_like(mask) in [0, 1], 1 for shadowed(ray hit)
+    shadow: array_like(mask) in [0, 1], 1 for lit(ray hit)
     intensity: weight for shadow
     """
     lab = cv2.cvtColor(img_orig.astype(np.float32), cv2.COLOR_RGB2Lab)
@@ -64,11 +64,6 @@ def fuse_shadow(img_orig, mask, shadow, intensity=0.4):
     lab[:, :, 0] = lum.reshape(lab.shape[:2])
 
     img_res = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-
-    # Mask vis
-    # img_vis = img_orig.copy().reshape(-1, 3)
-    # img_vis[mask] *= np.array([[2, 1, 1]])
-    # img_vis = img_vis.reshape(h, w, 3)
     return img_res
 
 
@@ -99,12 +94,12 @@ if __name__ == '__main__':
         path = os.path.join(result_root, img_name)
         relight_path = os.path.join(relight_root, dataset_img_name)
 
-        # if os.path.isfile(os.path.join(relight_path, dataset_img_name + f"_shadowmask_04.png")):
-        #     accepted_face.append(img_name)
+        # if os.path.isfile(os.path.join(relight_path, dataset_img_name + f"_faceregion.npy")):
+        #     accepted_face.append(dataset_img_name)
         #     continue
  
         # else: # for generating defection list
-        #     defected_face.append(img_name)
+        #     defected_face.append(dataset_img_name)
         #     continue
         """
         Processing before warping
