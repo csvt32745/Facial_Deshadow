@@ -65,6 +65,12 @@ class WBLogger(logging.getLoggerClass()):
 
         if is_update: wandb.log(log_dict, step=iteration)
 
+    def LogImageDB(self, iteration, img):
+        wandb.log(
+            { 'TestSample': wandb.Image(img) },
+            step=iteration
+        )
+
     def LogSummary(self, log_dict: dict):
         for k, v in log_dict.items():
             self.run.summary[k] = v
@@ -74,3 +80,8 @@ class WBLogger(logging.getLoggerClass()):
         wandb.watch(net)
         wandb.config[f'{name}_NetParams'] = s.total_params
         wandb.config[f'{name}_NetSummary'] = str(s)
+    
+    def LogTrainValid(self, n_train, n_valid):
+        self.info(f"# Train: {n_train}, Valid: {n_valid}")
+        wandb.config['NumTrain'] = str(n_train)
+        wandb.config['NumValid'] = str(n_valid)

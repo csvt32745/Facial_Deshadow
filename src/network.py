@@ -18,6 +18,7 @@ class Net():
         return self
     
     def loadModel(self, path):
+        print(f"Network Loading: {path}")
         self.net.load_state_dict(torch.load(path))
         return self
     

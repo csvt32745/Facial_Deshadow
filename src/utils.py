@@ -22,7 +22,6 @@ def denormalize_img_rgb(image, to_255=False):
         ret = (np.clip(ret, 0, 1)*255).astype(np.uint8)
     return ret
 
-
 def RGB2LAB(img):
     return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2Lab)
 
@@ -31,3 +30,27 @@ def RGB255_TorchLab(img):
 
 def TorchLab_RGB255(img):
     return cv2.cvtColor((img*255).detach().cpu().numpy().astype(np.uint8), cv2.COLOR_Lab2RGB)
+
+def fuse_shadow_RGB(img_orig, mask, shadow, intensity=0.4):
+    """ 
+    img_orig: original image
+    mask: human mask of the image
+    shadow: array_like(mask) in [0, 1], 1 for lit
+    intensity: weight for shadow
+    """
+    lab = cv2.cvtColor(img_orig.astype(np.float32), cv2.COLOR_RGB2Lab)
+
+    lum = lab[:, :, 0]
+    lum = lum - (lum * (1-shadow) * intensity) * mask
+    # lab[:, :, 0] = lum.reshape(lab.shape[:2])
+    img_res = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    return img_res
+
+def fuse_shadow(lum, mask, shadow, intensity=0.4):
+    """ 
+    img_orig: original image
+    mask: human mask of the image
+    shadow: array_like(mask) in [0, 1], 1 for lit
+    intensity: weight for shadow
+    """
+    return lum - (lum * (1-shadow) * intensity) * mask

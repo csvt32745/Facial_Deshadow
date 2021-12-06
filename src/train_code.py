@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.nn as nn
+from torchvision.utils import make_grid
 
 from einops import rearrange
 from tqdm import tqdm
@@ -16,11 +17,11 @@ from src.logger import WBLogger
 
 class BasicGANTrainer():
     def __init__(self, 
-        config, logger: WBLogger, model_name,
+        logger: WBLogger, model_name,
         G: Net, D: Net,
         train_loader, valid_loader, unsup_loader,
         pretrain, epoch, now_time, log_interval=100,
-        save_path="./models"):
+        save_path="./models", test_loader=None):
         
         self.logger = logger
         self.model_name = model_name
@@ -35,6 +36,7 @@ class BasicGANTrainer():
         self.train_loader = train_loader
         self.valid_loader = valid_loader
         self.unsup_loader = unsup_loader
+        self.test_loader = test_loader
 
         self.losser = DictLosser()
         self.image_buffer = {}
@@ -65,7 +67,7 @@ class BasicGANTrainer():
             self.open_skip -= 1
 
     def Train(self):
-        self.logger.info("Pretrain for epochs")
+        self.logger.info(f"Pretrain for {self.pretrain_epoch:02d} epochs")
         for epoch in range(self.pretrain_epoch):
             self.Pretrain(epoch)
 
@@ -75,7 +77,8 @@ class BasicGANTrainer():
             self.logger.info("Skip count: %d" % self.open_skip)
             self.EpochTrain(epoch)
             self.EpochValidation(epoch)
-            if (epoch+1) % 5 == 0 or (epoch+1) == self.epoch:
+            self.EpochTest(epoch)
+            if (epoch+1) % 10 == 0 or (epoch+1) == self.epoch:
                 self.SaveModel(self.net_save_path, f"{epoch}")
 
     def Pretrain(self, epoch):
@@ -130,8 +133,8 @@ class BasicGANTrainer():
 
             # Train D
             fake = self.G(x, skip_count=self.open_skip)
-            # prob_real = self.D(real)
-            prob_real = self.D(u)
+            prob_real = self.D(real)
+            # prob_real = self.D(u)
             prob_fake = self.D(fake.detach())
 
             lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
@@ -157,9 +160,12 @@ class BasicGANTrainer():
             self.iteration += 1
             
             if (i+1) % self.logging_interval == 0:
-                fake_ = x_.detach().cpu().clone()
+                # substitute the lum channel -> shadowed and deshadowed img
+                orig = real_.detach().cpu().clone() 
+                fake_ = orig.clone()
+                orig[:, 0] = x_[:, 0]
                 fake_[:, 0] = fake[:, 0]
-                self.image_buffer['Sample'] = self.merge_image(x_, fake_, real_, num=1)
+                self.image_buffer['Sample'] = self.merge_image(orig, fake_, real_, num=1)
                 
                 self.logger.LogTrainingDB(
                     epoch, self.epoch, i, len(self.train_loader),
@@ -188,8 +194,8 @@ class BasicGANTrainer():
             sh = sh.cuda()
             
             fake = self.G(x, skip_count=self.open_skip)
-            # prob_real = self.D(real)
-            prob_real = self.D(u)
+            prob_real = self.D(real)
+            # prob_real = self.D(u)
             prob_fake = self.D(fake)
             lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
             lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
@@ -203,10 +209,42 @@ class BasicGANTrainer():
             self.losser.add(loss_dict)
 
             if log_flg:
-                fake_ = x_.detach().cpu().clone()
+                # substitute the lum channel -> shadowed and deshadowed img
+                orig = real_.detach().cpu().clone() 
+                fake_ = orig.clone()
+                orig[:, 0] = x_[:, 0]
                 fake_[:, 0] = fake[:, 0]
-                self.image_buffer['Sample'] = self.merge_image(x_, fake_, real_, num=self.logging_validimg_num)
+            
+                self.image_buffer['Sample'] = self.merge_image(orig, fake_, real_, num=self.logging_validimg_num)
                 log_flg = False
             
         self.logger.LogValidationDB(epoch, self.epoch, self.iteration, self.losser.mean(), self.image_buffer)
         self.image_buffer.clear()
+
+    @torch.no_grad()
+    def EpochTest(self, epoch):
+        if self.test_loader is None:
+            return
+        self.D.eval()
+        self.G.eval()
+        
+        fakes = []
+        inputs = []
+        for i, x in enumerate(tqdm(self.test_loader, position=0, leave=True, dynamic_ncols=True)):
+            fake = x.clone()
+            fake[:, [0]] = self.G(x[:, [0]].cuda(), skip_count=self.open_skip).cpu()
+            inputs.append(x.clone())
+            fakes.append(fake.clone())
+        inputs = torch.cat(inputs)
+        fakes = torch.cat(fakes)
+        
+        output = make_grid(rearrange(
+            torch.stack([inputs, fakes]),
+            "col b c h w -> b c h (col w)"
+            ),
+            nrow=4
+        )
+        self.logger.LogImageDB(self.iteration, TorchLab_RGB255(output.permute(1, 2, 0)))
+            
+            
+        

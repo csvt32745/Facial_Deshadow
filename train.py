@@ -11,6 +11,7 @@ import torch.optim as optim
 import torch.nn as nn
 import torchvision.models as models
 from torch.utils.data.dataloader import DataLoader
+import wandb
 
 from config import config_parser_train
 from src.logger import WBLogger
@@ -33,18 +34,20 @@ def set_seed(seed):
 
 def main(config):
     now_time = datetime.now().strftime("%Y_%m%d_%I:%M:%S")
-    LR = config.learning_rate
-    EPOCH = config.epoch
-    BATCH_SIZE = config.batch_size
-
     log_name = os.path.join(config.save_log_path, config.exp_name, now_time + ".log")
     logger = WBLogger(
         config.exp_name, log_path=log_name, level=logging.DEBUG, config=config
-    )
+    )  
+    config = wandb.config
+
+    LR = config['learning_rate']
+    EPOCH = config['epoch']
+    PRETRAIN_EPOCH = config['pretrain_epoch']
+    BATCH_SIZE = config['batch_size']
 
     opt_func = lambda net: optim.AdamW(filter(lambda p: p.requires_grad, net.parameters()), lr = LR)
     # sch_func = lambda opt: optim.lr_scheduler.MultiStepLR(opt, milestones=[5], gamma = 0.2)
-    sch_func = lambda opt: optim.lr_scheduler.CosineAnnealingLR(opt, T_max=config.epoch, eta_min=1e-6, verbose=True)
+    sch_func = lambda opt: optim.lr_scheduler.CosineAnnealingLR(opt, T_max=config['epoch'], eta_min=1e-6, verbose=True)
 
     G = Net(
         HourglassNet(ch_in=1, ch_out=1, baseFilter=32),
@@ -56,8 +59,8 @@ def main(config):
         # TEST nn.BCEWithLogitsLoss() -> MSE
         opt_func, nn.MSELoss(), scheduler_func=sch_func
     )
-    G = G.cuda()
-    # G = G.loadModel('/home/csvt32745/relight/models/2021_1025_02:25:03/4_G.pt').cuda()
+    # G = G.cuda()
+    G = G.loadModel('models/2021_1202_12:57:15/4_G.pt').cuda()
     D = D.cuda()
 
     def get_dataloader(batch_size, shuffle, n_workers, dataset):
@@ -65,20 +68,32 @@ def main(config):
         return dataloader
 
     n_workers = 16
-    data_split = json.load(open(os.path.join(config.dataset_path, config.data_split_path))) if config.dataset_path else None
-    train_loader = get_dataloader(BATCH_SIZE, True, n_workers,
-        DPRShadowDataset(config.dataset_path, data_split['train'] if data_split else None))
-    valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, 
-        DPRShadowDataset(config.dataset_path, data_split['valid'] if data_split else None))
-    unsup_loader = get_dataloader(BATCH_SIZE, True, n_workers, UnsupervisedDataset('ffhq'))
-
+    data_split = json.load(open(os.path.join(config['dataset_path'], config['data_split_path']))) if config['dataset_path'] else None
+    if config['smaller_dataset'] < 1.:
+        for k in data_split:
+            data_split[k] = data_split[k][:int(config['smaller_dataset']*len(data_split[k]))]
     
+    train_loader = get_dataloader(BATCH_SIZE, True, n_workers,
+        DPRShadowDataset(config['dataset_path'], data_split['train'] if data_split else None,
+            k_size=(config['kernelratio_low'], config['kernelratio_high']),
+            intensity=(config['intensity_low'], config['intensity_high']))
+        )
+    valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, 
+        DPRShadowDataset(config['dataset_path'], data_split['valid'] if data_split else None,
+            k_size=(config['kernelratio_low'], config['kernelratio_high']),
+            intensity=(config['intensity_low'], config['intensity_high']))
+        )
+    unsup_loader = get_dataloader(BATCH_SIZE, True, n_workers, UnsupervisedDataset('ffhq'))
+    test_loader = get_dataloader(BATCH_SIZE, False, n_workers, UnsupervisedDataset('ffhq_test'))
+
+    logger.LogTrainValid(len(data_split['train']), len(data_split['valid']))
+
     trainer = BasicGANTrainer(
-        config, logger, config.exp_name,
+        logger, config['exp_name'],
         G, D, train_loader, valid_loader, unsup_loader,
-        10, EPOCH,
+        PRETRAIN_EPOCH, EPOCH,
         now_time, log_interval=len(train_loader)//2, 
-        save_path=config.save_model_path
+        save_path=config['save_model_path'], test_loader=test_loader
     )
     trainer.Train()
     
