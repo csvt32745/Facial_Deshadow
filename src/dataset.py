@@ -11,19 +11,13 @@ from PIL import Image
 
 from src.utils import denormalize_img_rgb, RGB2LAB
 
-default_transform = T.Compose(
-    [
-        T.Resize((256, 256)),
-        T.Lambda(RGB2LAB),
-        T.ToTensor(),
-        # T.Normalize(mean=[0.485, 0.456, 0.406],
-        #         std=[0.229, 0.224, 0.225])
-    ]
-)
-
-
 class DPRShadowDataset(Dataset):
-    def __init__(self, root, img_list=None, n_lights=5, size=256, intensity=(0.1, 0.7), k_size=(0.02, 0.1)):
+    def __init__(self, root, img_list=None, 
+        n_lights=5, size=256, 
+        intensity=(0.1, 0.7), k_size=(0.02, 0.1),
+        is_rgb=False,
+        ):
+
         # root/imgHQxxxxx/
         base_img_list = os.listdir(root) if img_list is None else img_list
         self.imgpath_list = list(filter(os.path.isdir, [os.path.join(root, p) for p in base_img_list]))
@@ -31,19 +25,20 @@ class DPRShadowDataset(Dataset):
         self.n_lights = n_lights
         self.k_size = [int(size*k) for k in k_size] # odd-size kernel size of blur on shadow
         self.k_size[1] = max(*self.k_size)
-
+        
         self.intensity = list(intensity) # shadow intensity
         self.intensity[1] = max(self.intensity)
+        self.size = size
         self.init_transform(size)
+
+        self.is_rgb = is_rgb
 
     def init_transform(self, size):
         self.transform = T.Compose(
             [
                 T.Resize((size, size)),
-                T.Lambda(RGB2LAB),
-                T.ToTensor(),
-                # T.Normalize(mean=[0.485, 0.456, 0.406],
-                #         std=[0.229, 0.224, 0.225])
+                # T.Lambda(RGB2LAB),
+                # T.Lambda(lambda img: np.array(img)/255)
             ]
         )
         self.shadow_transform = T.Compose(
@@ -54,16 +49,18 @@ class DPRShadowDataset(Dataset):
                 ) if self.k_size[0] != self.k_size[1] else T.Lambda(
                     lambda img: T.functional.gaussian_blur(img, 1+2*self.k_size[0], sigma=None)
                 ),
-                T.ToTensor()
+                T.Lambda(lambda img: np.array(img)/255)
             ]
         )
 
         self.mask_transform = T.Compose(
             [
                 T.Resize((size, size)),
-                T.ToTensor(),
+                T.Lambda(lambda img: np.array(img)/255)
             ]
         )
+
+        self.to_tensor = T.ToTensor()
 
     def __len__(self):
         return len(self.img_list)*self.n_lights
@@ -79,22 +76,59 @@ class DPRShadowDataset(Dataset):
         mask_shadow = Image.open(os.path.join(path, f"{img_name}_shadowmask_{idx_light}.png"))
         mask_face = Image.fromarray(np.load(os.path.join(path, f"{img_name}_faceregion.npy")).astype(np.uint8)*255)
         
-        mask_shadow = self.shadow_transform(mask_shadow)
-        mask_face = self.mask_transform(mask_face)
-        img_orig = self.transform(img_orig)
-        img_shadow = fuse_shadow(img_orig[0], mask_face, mask_shadow, np.random.uniform(*self.intensity))
-        return img_shadow, img_orig, sh_light
+        img_orig = self.transform(img_orig) # uint8
+        img_orig_lab = RGB2LAB(img_orig)
+        mask_face = self.mask_transform(mask_face) # float32
+        mask_shadow = self.shadow_transform(mask_shadow) # float32
+        
+        img_shadow = fuse_shadow(
+            img_orig_lab[..., 0]/255.,
+            mask_face,
+            mask_shadow,
+            np.random.uniform(*self.intensity)).astype(np.float32)
+        
+        if self.is_rgb:
+            img_shadow = cv2.cvtColor(
+                np.stack([
+                    (np.clip(img_shadow, 0, 1)*255).astype(np.uint8),
+                    img_orig_lab[..., 1], img_orig_lab[..., 2]], axis=-1),
+                cv2.COLOR_Lab2RGB
+            ) # 3-ch RGB
+        else:
+            img_orig = img_orig_lab
+
+        return self.to_tensor(img_shadow), self.to_tensor(img_orig), sh_light
 
 class UnsupervisedDataset(Dataset):
-    def __init__(self, root, img_list=None, transform=default_transform):
+    def __init__(self, root, img_list=None, size=256, is_rgb=False):
         # root/imgHQxxxxx/
         self.img_list = os.listdir(root) if img_list is None else img_list
         self.img_name = list(filter(lambda p: os.path.splitext(p)[1] in ['.jpg', '.png', '.jpeg'], self.img_list))
         self.img_list = [os.path.join(root, p) for p in self.img_name]
-        self.transform = transform
+        self.is_rgb = is_rgb
+        self.init_transform(size)
 
     def __len__(self):
         return len(self.img_list)
+
+    def init_transform(self, size):
+        if self.is_rgb:
+            self.transform = T.Compose(
+                    [
+                        T.Resize((size, size)),
+                        T.ToTensor(),
+                        # T.Normalize(mean=[0.485, 0.456, 0.406],
+                        #         std=[0.229, 0.224, 0.225])
+                    ]
+                )
+        else:
+            self.transform = T.Compose(
+                    [
+                        T.Resize((size, size)),
+                        T.Lambda(RGB2LAB),
+                        T.ToTensor(),
+                    ]
+                )
 
     def __getitem__(self, idx):
         img = Image.open(self.img_list[idx])

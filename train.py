@@ -40,27 +40,37 @@ def main(config):
     )  
     config = wandb.config
 
+    if config['kernelratio_low'] > config['kernelratio_high']:
+        tmp = config['kernelratio_low']
+        config['kernelratio_low'] = config['kernelratio_high']
+        config['kernelratio_high'] = tmp
+        wandb.config.update(config)
+
     LR = config['learning_rate']
     EPOCH = config['epoch']
     PRETRAIN_EPOCH = config['pretrain_epoch']
     BATCH_SIZE = config['batch_size']
+    IS_RGB = config['is_rgb']
 
     opt_func = lambda net: optim.AdamW(filter(lambda p: p.requires_grad, net.parameters()), lr = LR)
     # sch_func = lambda opt: optim.lr_scheduler.MultiStepLR(opt, milestones=[5], gamma = 0.2)
     sch_func = lambda opt: optim.lr_scheduler.CosineAnnealingLR(opt, T_max=config['epoch'], eta_min=1e-6, verbose=True)
-
+    
+    ch_in = 3 if IS_RGB else 1
     G = Net(
-        HourglassNet(ch_in=1, ch_out=1, baseFilter=32),
-        opt_func, GeneratorLoss(), scheduler_func=sch_func
+        HourglassNet(ch_in=ch_in, baseFilter=32),
+        opt_func, GeneratorLoss(is_rgb=IS_RGB), scheduler_func=sch_func
     )
     D = Net(
-        NLayerDiscriminator(1, ndf=64),
+        NLayerDiscriminator(ch_in, ndf=64),
         # ResNet(models.resnet18(pretrained=True)),
         # TEST nn.BCEWithLogitsLoss() -> MSE
         opt_func, nn.MSELoss(), scheduler_func=sch_func
     )
     # G = G.cuda()
-    G = G.loadModel('models/2021_1202_12:57:15/4_G.pt').cuda()
+    # G = G.loadModel('models/2021_1202_12:57:15/4_G.pt').cuda() # lab
+    G = G.loadModel('models/2021_1214_05:31:35/9_G.pt').cuda() # RGB
+    
     D = D.cuda()
 
     def get_dataloader(batch_size, shuffle, n_workers, dataset):
@@ -76,15 +86,19 @@ def main(config):
     train_loader = get_dataloader(BATCH_SIZE, True, n_workers,
         DPRShadowDataset(config['dataset_path'], data_split['train'] if data_split else None,
             k_size=(config['kernelratio_low'], config['kernelratio_high']),
-            intensity=(config['intensity_low'], config['intensity_high']))
+            intensity=(config['intensity_low'], config['intensity_high']),
+            is_rgb=IS_RGB,
         )
+    )
     valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, 
         DPRShadowDataset(config['dataset_path'], data_split['valid'] if data_split else None,
             k_size=(config['kernelratio_low'], config['kernelratio_high']),
-            intensity=(config['intensity_low'], config['intensity_high']))
+            intensity=(config['intensity_low'], config['intensity_high']),
+            is_rgb=IS_RGB,
         )
-    unsup_loader = get_dataloader(BATCH_SIZE, True, n_workers, UnsupervisedDataset('ffhq'))
-    test_loader = get_dataloader(BATCH_SIZE, False, n_workers, UnsupervisedDataset('ffhq_test'))
+    )
+    unsup_loader = get_dataloader(BATCH_SIZE, True, n_workers, UnsupervisedDataset('ffhq', is_rgb=IS_RGB))
+    test_loader = get_dataloader(BATCH_SIZE, False, n_workers, UnsupervisedDataset('ffhq_test', is_rgb=IS_RGB))
 
     logger.LogTrainValid(len(data_split['train']), len(data_split['valid']))
 
@@ -93,7 +107,7 @@ def main(config):
         G, D, train_loader, valid_loader, unsup_loader,
         PRETRAIN_EPOCH, EPOCH,
         now_time, log_interval=len(train_loader)//2, 
-        save_path=config['save_model_path'], test_loader=test_loader
+        save_path=config['save_model_path'], test_loader=test_loader, is_rgb=IS_RGB
     )
     trainer.Train()
     

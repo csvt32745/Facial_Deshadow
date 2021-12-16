@@ -11,11 +11,11 @@ import lpips
 from einops import rearrange
 
 class GeneratorLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, is_rgb=False):
         super().__init__()
         # self.recon = nn.MSELoss()
         self.recon = nn.L1Loss()
-        self.edge = SobelLoss(self.recon)
+        self.edge = SobelLoss(self.recon, is_rgb)
         self.lpips = lpips.LPIPS(net='vgg')
         self.dssim = lpips.DSSIM(colorspace='RGB')
         self.adv = NonSaturaingLoss()
@@ -73,7 +73,7 @@ class NonSaturaingLoss(nn.Module):
         return self.loss_fn(x, torch.ones_like(x, device='cuda'))
 
 class SobelLoss(nn.Module):
-    def __init__(self, loss_fn):
+    def __init__(self, loss_fn, is_rgb=False):
         super().__init__()
         self.conv = nn.Conv2d(1, 1, 3, padding=1, bias=False)
         sobel = torch.FloatTensor([
@@ -82,6 +82,13 @@ class SobelLoss(nn.Module):
             [-1, -1, -1]
         ]).reshape(1, 1, 3, 3)
         self.conv.weight.data = sobel
+        if is_rgb:
+            self.gray = nn.Conv2d(3, 1, 1, bias=False)
+            self.gray.weight.data = torch.FloatTensor([0.299, 0.587, 0.114]).reshape(1, 3, 1, 1)
+            self.conv = nn.Sequential(
+                self.gray,
+                self.conv
+            )
         
         self.loss_fn = loss_fn
 

@@ -44,9 +44,9 @@ class BasicBlock(nn.Module):
         out = self.bn2(out)
         
         if self.inplanes != self.outplanes:
-        		out += self.shortcuts(x)
+            out += self.shortcuts(x)
         else:
-        		out += x
+            out += x
         
         out = F.relu(out)
         return out
@@ -141,9 +141,9 @@ class HourglassNet(nn.Module):
     	            lighting should be estimated from the inner most layer
         NOTE: we split the bottle neck layer into albedo, normal and lighting
     '''
-    def __init__(self, ch_in=3, ch_out=3, n_out_layers=2, baseFilter = 16, gray=True):
+    def __init__(self, ch_in=3, n_out_layers=2, baseFilter = 16, gray=True):
         super(HourglassNet, self).__init__()
-
+        ch_out = ch_in
         self.ncLight = 27   # number of channels for input to lighting network
         self.baseFilter = baseFilter
 

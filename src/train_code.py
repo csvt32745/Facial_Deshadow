@@ -21,7 +21,7 @@ class BasicGANTrainer():
         G: Net, D: Net,
         train_loader, valid_loader, unsup_loader,
         pretrain, epoch, now_time, log_interval=100,
-        save_path="./models", test_loader=None):
+        save_path="./models", test_loader=None, is_rgb=False):
         
         self.logger = logger
         self.model_name = model_name
@@ -55,11 +55,16 @@ class BasicGANTrainer():
         self.open_skip = len(self.open_skip_epoch)
         # from high to low, open_skip == N means openning the N-th inner layer
 
+        self.is_rgb = is_rgb
+        self.GetChs = (lambda x: x.cuda()) if is_rgb else (lambda x: x[:, [0]].cuda())
+        # get the required channels (Luminance from Lab, or RGB)
+
     def SaveModel(self, save_path, file_name):
         if not os.path.isdir(save_path):
             os.makedirs(save_path)
-        self.D.saveModel(os.path.join(save_path, f"{file_name}_D.pt"))
-        self.G.saveModel(os.path.join(save_path, f"{file_name}_G.pt"))
+        rgb_str = '_RGB' if self.is_rgb else ''
+        self.D.saveModel(os.path.join(save_path, f"{file_name+rgb_str}_D.pt"))
+        self.G.saveModel(os.path.join(save_path, f"{file_name+rgb_str}_G.pt"))
         self.logger.info("Model save in "+ save_path)
 
     def CalOpenSkip(self, epoch):
@@ -85,11 +90,10 @@ class BasicGANTrainer():
         self.D.train()
         self.G.train()
         self.losser.clear()
-        for i, x in enumerate(tqdm(self.train_loader, position=0, leave=True, dynamic_ncols=True)):
-            x_, real_, sh = x
-            real = real_[:, [0]].cuda()
-            x = x_[:, [0]].cuda()
-            b = x.size(0)
+        for i, x in enumerate(tqdm(self.unsup_loader, position=0, leave=True, dynamic_ncols=True)):
+            # x_, real_, sh = x
+            # x = self.GetChs(x_)
+            x = self.GetChs(x)
             
             # Train D
             fake = self.G(x, skip_count=999)
@@ -102,19 +106,19 @@ class BasicGANTrainer():
 
             if (i+1) % self.logging_interval == 0:
                 self.logger.LogTrainingDB(
-                    epoch, self.pretrain_epoch, i, len(self.train_loader),
+                    epoch, self.pretrain_epoch, i, len(self.unsup_loader),
                     self.iteration, self.losser.mean(), is_update=False)
                 self.losser.clear()
     
-    @staticmethod
-    def merge_image(x, f, r, num=1):
+    def merge_image(self, x, f, r, num=1):
         img = rearrange(
             torch.stack((x[:num], f[:num], r[:num])),
             'n b c h w -> (b h) (n w) c'
         )
-        img = TorchLab_RGB255(img)
+        img = (img.detach().numpy()*255).astype(np.uint8) if self.is_rgb else TorchLab_RGB255(img)
         return img
-            
+    
+
     def EpochTrain(self, epoch):
         self.D.train()
         self.G.train()
@@ -125,10 +129,14 @@ class BasicGANTrainer():
             self.unsup_loader
             )):
             x_, real_, sh = x
-            real = real_[:, [0]].cuda()
-            x = x_[:, [0]].cuda()
+            
+            real = self.GetChs(real_)
+            x = self.GetChs(x_)
+            u = self.GetChs(u)
+            # real = real_[:, [0]].cuda()
+            # x = x_[:, [0]].cuda()
+            # u = u[:, [0]].cuda()
             sh = sh.cuda()
-            u = u[:, [0]].cuda()
             
 
             # Train D
@@ -161,10 +169,15 @@ class BasicGANTrainer():
             
             if (i+1) % self.logging_interval == 0:
                 # substitute the lum channel -> shadowed and deshadowed img
-                orig = real_.detach().cpu().clone() 
-                fake_ = orig.clone()
-                orig[:, 0] = x_[:, 0]
-                fake_[:, 0] = fake[:, 0]
+                if self.is_rgb:
+                    orig = x_
+                    fake_ = fake.detach().cpu()
+                else:
+                    orig = real_.detach().cpu().clone() 
+                    fake_ = orig.clone()
+                    orig[:, 0] = x_[:, 0]
+                    fake_[:, 0] = fake[:, 0]
+
                 self.image_buffer['Sample'] = self.merge_image(orig, fake_, real_, num=1)
                 
                 self.logger.LogTrainingDB(
@@ -188,9 +201,12 @@ class BasicGANTrainer():
             self.unsup_loader
             )):
             x_, real_, sh = x
-            real = real_[:, [0]].cuda()
-            x = x_[:, [0]].cuda()
-            u = u[:, [0]].cuda()
+            real = self.GetChs(real_)
+            x = self.GetChs(x_)
+            u = self.GetChs(u)
+            # real = real_[:, [0]].cuda()
+            # x = x_[:, [0]].cuda()
+            # u = u[:, [0]].cuda()
             sh = sh.cuda()
             
             fake = self.G(x, skip_count=self.open_skip)
@@ -209,11 +225,15 @@ class BasicGANTrainer():
             self.losser.add(loss_dict)
 
             if log_flg:
-                # substitute the lum channel -> shadowed and deshadowed img
-                orig = real_.detach().cpu().clone() 
-                fake_ = orig.clone()
-                orig[:, 0] = x_[:, 0]
-                fake_[:, 0] = fake[:, 0]
+                if self.is_rgb:
+                    orig = x_
+                    fake_ = fake.detach().cpu()
+                else:
+                    # substitute the lum channel -> shadowed and deshadowed img
+                    orig = real_.detach().cpu().clone() 
+                    fake_ = orig.clone()
+                    orig[:, 0] = x_[:, 0]
+                    fake_[:, 0] = fake[:, 0]
             
                 self.image_buffer['Sample'] = self.merge_image(orig, fake_, real_, num=self.logging_validimg_num)
                 log_flg = False
@@ -232,7 +252,12 @@ class BasicGANTrainer():
         inputs = []
         for i, x in enumerate(tqdm(self.test_loader, position=0, leave=True, dynamic_ncols=True)):
             fake = x.clone()
-            fake[:, [0]] = self.G(x[:, [0]].cuda(), skip_count=self.open_skip).cpu()
+            res = self.G(self.GetChs(x), skip_count=self.open_skip).cpu()
+            if self.is_rgb:
+                fake = res
+            else:
+                fake[:, [0]] = res
+            
             inputs.append(x.clone())
             fakes.append(fake.clone())
         inputs = torch.cat(inputs)
@@ -244,7 +269,10 @@ class BasicGANTrainer():
             ),
             nrow=4
         )
-        self.logger.LogImageDB(self.iteration, TorchLab_RGB255(output.permute(1, 2, 0)))
+        self.logger.LogImageDB(self.iteration, 
+            (output.permute(1, 2, 0).numpy()*255).astype(np.uint8) if self.is_rgb
+            else TorchLab_RGB255(output.permute(1, 2, 0))
+        )
             
             
         
