@@ -25,6 +25,9 @@ class Net():
     def __call__(self, *args, **kwargs):
         return self.net(*args, **kwargs)
     
+    def get_features(self, *args, **kwargs):
+        return self.net.get_features(*args, **kwargs)
+    
     def train(self):
         self.net.train()
     

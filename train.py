@@ -18,7 +18,7 @@ from src.logger import WBLogger
 from src.dataset import DPRShadowDataset, UnsupervisedDataset
 from src.train_code import BasicGANTrainer
 from src.network import *
-from src.defineHourglass_512_gray_skip import HourglassNet
+from src.defineHourglass_512_gray_skip import HourglassNet, RecursiveStackedHourglassNet, SimpleStackedHourglassNet
 from src.loss_func import GeneratorLoss
 
 def set_seed(seed):
@@ -51,14 +51,19 @@ def main(config):
     PRETRAIN_EPOCH = config['pretrain_epoch']
     BATCH_SIZE = config['batch_size']
     IS_RGB = config['is_rgb']
+    N_STACKS = config['n_stacks']
+    IS_RECUR_STACK = config['is_recursive_stack']
 
     opt_func = lambda net: optim.AdamW(filter(lambda p: p.requires_grad, net.parameters()), lr = LR)
     # sch_func = lambda opt: optim.lr_scheduler.MultiStepLR(opt, milestones=[5], gamma = 0.2)
-    sch_func = lambda opt: optim.lr_scheduler.CosineAnnealingLR(opt, T_max=config['epoch'], eta_min=1e-6, verbose=True)
+    sch_func = lambda opt: optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCH, eta_min=1e-6, verbose=True)
     
     ch_in = 3 if IS_RGB else 1
+    ch_bottleneck = 32
     G = Net(
-        HourglassNet(ch_in=ch_in, baseFilter=32),
+        HourglassNet(ch_in=ch_in, baseFilter=ch_bottleneck) if N_STACKS <= 1 \
+            else RecursiveStackedHourglassNet(n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck) if IS_RECUR_STACK \
+            else SimpleStackedHourglassNet(n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck),
         opt_func, GeneratorLoss(is_rgb=IS_RGB), scheduler_func=sch_func
     )
     D = Net(
@@ -68,8 +73,19 @@ def main(config):
         opt_func, nn.MSELoss(), scheduler_func=sch_func
     )
     # G = G.cuda()
-    # G = G.loadModel('models/2021_1202_12:57:15/4_G.pt').cuda() # lab
-    G = G.loadModel('models/2021_1214_05:31:35/9_G.pt').cuda() # RGB
+    try:
+        if N_STACKS < 1:
+            if IS_RGB:
+                G = G.loadModel('models/2021_1214_05:31:35/9_G.pt').cuda() # RGB
+            else:
+                G = G.loadModel('models/2021_1202_12:57:15/4_G.pt').cuda() # lab
+        elif N_STACKS == 2:
+            G = G.loadModel('models/stacked/2021_1221_01:56:28/9_RGB_G.pt').cuda()
+        else:
+            G = G.loadModel('models/stacked/2021_1221_01:58:22/9_RGB_G.pt').cuda()
+    except:
+        logger.warning("Load model error, using default model.")
+        G = G.cuda()
     
     D = D.cuda()
 
@@ -107,7 +123,7 @@ def main(config):
         G, D, train_loader, valid_loader, unsup_loader,
         PRETRAIN_EPOCH, EPOCH,
         now_time, log_interval=len(train_loader)//2, 
-        save_path=config['save_model_path'], test_loader=test_loader, is_rgb=IS_RGB
+        save_path=config['save_model_path'], test_loader=test_loader, is_rgb=IS_RGB, n_stacks=N_STACKS
     )
     trainer.Train()
     

@@ -21,7 +21,7 @@ class BasicGANTrainer():
         G: Net, D: Net,
         train_loader, valid_loader, unsup_loader,
         pretrain, epoch, now_time, log_interval=100,
-        save_path="./models", test_loader=None, is_rgb=False):
+        save_path="./models", test_loader=None, is_rgb=False, n_stacks=1):
         
         self.logger = logger
         self.model_name = model_name
@@ -46,18 +46,21 @@ class BasicGANTrainer():
         self.logging_validimg_num = 3
 
         self.net_save_path = os.path.join(
-            save_path, self.model_name, self.now_time+self.model_name)
+            save_path, self.model_name, self.now_time)
 
         self.logger.LogNet(self.G.net, 'G')
         self.logger.LogNet(self.D.net, 'D')
 
-        self.open_skip_epoch = [10, 15, 20, 25][::-1]
-        self.open_skip = len(self.open_skip_epoch)
         # from high to low, open_skip == N means openning the N-th inner layer
+        self.open_skip_epoch = [6, 10, 13, 15][::-1]
+        # self.open_skip_epoch = [10, 15, 20, 25][::-1]
+        self.open_skip = len(self.open_skip_epoch)
 
+        # get the required channels (Luminance from Lab, or RGB)
         self.is_rgb = is_rgb
         self.GetChs = (lambda x: x.cuda()) if is_rgb else (lambda x: x[:, [0]].cuda())
-        # get the required channels (Luminance from Lab, or RGB)
+
+        self.n_stacks = max(n_stacks, 1)
 
     def SaveModel(self, save_path, file_name):
         if not os.path.isdir(save_path):
@@ -96,9 +99,9 @@ class BasicGANTrainer():
             x = self.GetChs(x)
             
             # Train D
-            fake = self.G(x, skip_count=999)
+            fake = self.G.get_features(x, skip_count=999)
             # lossG_recon = crit(fake, x)
-            loss = self.G.crit.recon(fake, x)
+            loss = self.G.crit.recon(torch.cat(fake), torch.tile(x, (self.n_stacks, 1, 1, 1)))
             self.G.step(loss)
             
             # Record
@@ -140,7 +143,10 @@ class BasicGANTrainer():
             
 
             # Train D
-            fake = self.G(x, skip_count=self.open_skip)
+            fake = self.G.get_features(x, skip_count=self.open_skip)
+            fake_result = fake[-1]
+            fake = torch.cat(fake)
+
             prob_real = self.D(real)
             # prob_real = self.D(u)
             prob_fake = self.D(fake.detach())
@@ -152,7 +158,7 @@ class BasicGANTrainer():
 
             # Train G
             prob = self.D(fake)
-            loss, loss_dict = self.G.crit(fake, real, prob)
+            loss, loss_dict = self.G.crit(fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob)
             # lossG_adv = self.D.crit(prob, label_real)
             # loss = lossG_recon + lossG_adv
             self.G.step(loss)
@@ -171,12 +177,12 @@ class BasicGANTrainer():
                 # substitute the lum channel -> shadowed and deshadowed img
                 if self.is_rgb:
                     orig = x_
-                    fake_ = fake.detach().cpu()
+                    fake_ = fake_result.detach().cpu()
                 else:
                     orig = real_.detach().cpu().clone() 
                     fake_ = orig.clone()
                     orig[:, 0] = x_[:, 0]
-                    fake_[:, 0] = fake[:, 0]
+                    fake_[:, 0] = fake_result[:, 0]
 
                 self.image_buffer['Sample'] = self.merge_image(orig, fake_, real_, num=1)
                 
@@ -209,13 +215,16 @@ class BasicGANTrainer():
             # u = u[:, [0]].cuda()
             sh = sh.cuda()
             
-            fake = self.G(x, skip_count=self.open_skip)
+            fake = self.G.get_features(x, skip_count=self.open_skip)
+            fake_result = fake[-1]
+            fake = torch.cat(fake)
+
             prob_real = self.D(real)
             # prob_real = self.D(u)
             prob_fake = self.D(fake)
             lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
             lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
-            _, loss_dict = self.G.crit(fake, real, prob_fake)
+            _, loss_dict = self.G.crit(fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob_fake)
             
             # Record
             loss_dict.update({
@@ -227,13 +236,13 @@ class BasicGANTrainer():
             if log_flg:
                 if self.is_rgb:
                     orig = x_
-                    fake_ = fake.detach().cpu()
+                    fake_ = fake_result.detach().cpu()
                 else:
                     # substitute the lum channel -> shadowed and deshadowed img
                     orig = real_.detach().cpu().clone() 
                     fake_ = orig.clone()
                     orig[:, 0] = x_[:, 0]
-                    fake_[:, 0] = fake[:, 0]
+                    fake_[:, 0] = fake_result[:, 0]
             
                 self.image_buffer['Sample'] = self.merge_image(orig, fake_, real_, num=self.logging_validimg_num)
                 log_flg = False

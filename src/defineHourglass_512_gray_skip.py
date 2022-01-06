@@ -199,5 +199,49 @@ class HourglassNet(nn.Module):
         out_img = torch.sigmoid(out_img)
         return out_img
 
+    def get_features(self, *args, **kwargs):
+        return [self.forward(*args, **kwargs)]
+
+class SimpleStackedHourglassNet(nn.Module):
+    def __init__(self, n_stacks, ch_in=3, n_out_layers=0, baseFilter = 16, gray=True):
+        super().__init__()
+        self.n_stacks = n_stacks
+        self.net = nn.ModuleList([HourglassNet(ch_in, n_out_layers, baseFilter, gray) for i in range(n_stacks)])
+
+    def forward(self, x, skip_count=0):
+        out = x
+        for n in self.net:
+            out = n(out, skip_count)
+        return out
+    
+    def get_features(self, x, skip_count=0):
+        feat = x
+        out = [] 
+        for n in self.net:
+            feat = n(feat, skip_count)
+            out.append(feat)
+        return out # n_stacks, B, C, H, W
+
+class RecursiveStackedHourglassNet(nn.Module):
+    def __init__(self, n_stacks, ch_in=3, n_out_layers=0, baseFilter = 16, gray=True):
+        super().__init__()
+        self.n_stacks = n_stacks
+        self.net = HourglassNet(ch_in, n_out_layers, baseFilter, gray)
+
+    def forward(self, x, skip_count=0):
+        out = x
+        for i in range(self.n_stacks):
+            out = self.net(out, skip_count)
+        return out
+    
+    def get_features(self, x, skip_count=0):
+        feat = x
+        out = [] 
+        for i in range(self.n_stacks):
+            feat = self.net(feat, skip_count)
+            out.append(feat)
+        return out # n_stacks, B, C, H, W
+
+
 if __name__ == '__main__':
     pass
