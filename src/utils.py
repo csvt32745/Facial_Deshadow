@@ -54,3 +54,29 @@ def fuse_shadow(lum, mask, shadow, intensity=0.4):
     intensity: weight for shadow
     """
     return lum - (lum * (1-shadow) * intensity) * mask
+
+# Color Jitter Tranform from Portrait Shadow Manipulation (SIGGRAPH 2020)
+# https://github.com/google/portrait-shadow-manipulation/blob/master/utils.py
+
+def schlick_bias(x, bias):
+    return x / ((1.0 / bias - 2.0) * (1.0 - x) + 1.0 + 1e-6)
+
+def apply_color_gain(image, gain):
+    """Apply tone perturbation to images.
+    Tone curve jitter comes from Schlick's bias and gain.
+    Schlick, Christophe. "Fast alternatives to Perlin’s bias and gain functions." Graphics Gems IV 4 (1994).
+    Args:
+    image: a 3D image tensor [H, W, C].
+    gain: a tuple of length 3 that specifies the strength of the jitter per color channel.
+    is_rgb: a bool that indicates whether input is grayscale (C=1) or rgb (C=3).
+
+    Returns:
+    3D tensor applied with a tone curve jitter, has the same size as input.
+    """
+    mask = image >= 0.5
+    new_image = (schlick_bias(image * 2.0, gain) / 2.0 * (1.0 - mask)) \
+        + ((schlick_bias(image * 2.0 - 1.0, 1.0 - gain) / 2.0 + 0.5) * mask)
+    return new_image
+
+def approx_color_matrix(image, new_image):
+    return np.linalg.lstsq(image.reshape(-1 ,3), new_image.reshape(-1, 3), rcond=None)[0]

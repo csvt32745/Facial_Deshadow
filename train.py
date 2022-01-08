@@ -15,7 +15,7 @@ import wandb
 
 from config import config_parser_train
 from src.logger import WBLogger
-from src.dataset import DPRShadowDataset, UnsupervisedDataset
+from src.dataset import DPRShadowDataset, DPRShadowDataset_ColorJitter, UnsupervisedDataset
 from src.train_code import BasicGANTrainer
 from src.network import *
 from src.defineHourglass_512_gray_skip import HourglassNet, RecursiveStackedHourglassNet, SimpleStackedHourglassNet
@@ -50,7 +50,7 @@ def main(config):
     EPOCH = config['epoch']
     PRETRAIN_EPOCH = config['pretrain_epoch']
     BATCH_SIZE = config['batch_size']
-    IS_RGB = config['is_rgb']
+    IS_RGB = config['is_rgb'] or config['is_colorjitter']
     N_STACKS = config['n_stacks']
     IS_RECUR_STACK = config['is_recursive_stack']
 
@@ -72,21 +72,24 @@ def main(config):
         # TEST nn.BCEWithLogitsLoss() -> MSE
         opt_func, nn.MSELoss(), scheduler_func=sch_func
     )
-    # G = G.cuda()
     try:
-        if N_STACKS < 1:
-            if IS_RGB:
-                G = G.loadModel('models/2021_1214_05:31:35/9_G.pt').cuda() # RGB
-            else:
-                G = G.loadModel('models/2021_1202_12:57:15/4_G.pt').cuda() # lab
-        elif N_STACKS == 2:
-            G = G.loadModel('models/stacked/2021_1221_01:56:28/9_RGB_G.pt').cuda()
+        if config['model_path']:
+            G = G.loadModel(config['model_path'] + "G.pt") # RGB
+            D = D.loadModel(config['model_path'] + "D.pt") # RGB
         else:
-            G = G.loadModel('models/stacked/2021_1221_01:58:22/9_RGB_G.pt').cuda()
+            if N_STACKS < 1:
+                if IS_RGB:
+                    G = G.loadModel('models/2021_1214_05:31:35/9_G.pt') # RGB
+                else:
+                    G = G.loadModel('models/2021_1202_12:57:15/4_G.pt') # lab
+            elif N_STACKS == 2:
+                G = G.loadModel('models/stacked/2021_1221_01:56:28/9_RGB_G.pt')
+            else:
+                G = G.loadModel('models/stacked/2021_1221_01:58:22/9_RGB_G.pt')
     except:
         logger.warning("Load model error, using default model.")
-        G = G.cuda()
     
+    G = G.cuda()
     D = D.cuda()
 
     def get_dataloader(batch_size, shuffle, n_workers, dataset):
@@ -98,16 +101,17 @@ def main(config):
     if config['smaller_dataset'] < 1.:
         for k in data_split:
             data_split[k] = data_split[k][:int(config['smaller_dataset']*len(data_split[k]))]
-    
+
+    DPRDATASET = DPRShadowDataset_ColorJitter if config['is_colorjitter'] else DPRShadowDataset
     train_loader = get_dataloader(BATCH_SIZE, True, n_workers,
-        DPRShadowDataset(config['dataset_path'], data_split['train'] if data_split else None,
+        DPRDATASET(config['dataset_path'], data_split['train'] if data_split else None,
             k_size=(config['kernelratio_low'], config['kernelratio_high']),
             intensity=(config['intensity_low'], config['intensity_high']),
             is_rgb=IS_RGB,
         )
     )
     valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, 
-        DPRShadowDataset(config['dataset_path'], data_split['valid'] if data_split else None,
+        DPRDATASET(config['dataset_path'], data_split['valid'] if data_split else None,
             k_size=(config['kernelratio_low'], config['kernelratio_high']),
             intensity=(config['intensity_low'], config['intensity_high']),
             is_rgb=IS_RGB,
