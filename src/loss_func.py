@@ -9,15 +9,18 @@ from types import MethodType
 import cv2
 import lpips
 from einops import rearrange
+from pytorch_msssim import SSIM, MS_SSIM
 
 class GeneratorLoss(nn.Module):
-    def __init__(self, is_rgb=False):
+    def __init__(self, is_rgb=False, is_msssim=True):
         super().__init__()
         # self.recon = nn.MSELoss()
         self.recon = nn.L1Loss()
         self.edge = SobelLoss(self.recon, is_rgb)
         self.lpips = lpips.LPIPS(net='vgg')
-        self.dssim = lpips.DSSIM(colorspace='RGB')
+        # self.ssim = 
+        self.ssim = MS_SSIM(data_range=1., size_average=True, channel=3) if is_msssim \
+            else SSIM(data_range=1., size_average=True, channel=3)
         self.adv = NonSaturaingLoss()
 
         self.eval()
@@ -27,19 +30,18 @@ class GeneratorLoss(nn.Module):
         recon = self.recon(x, GT)
         perceptual = self.lpips(x, GT, normalize=True).mean()
         edge = self.edge(x, GT)
-        # dssim = self.dssim(x, GT)
+        ssim = self.ssim(x, GT)
 
         # loss = l2 + adv
-        loss = recon + perceptual + adv*0.1 + edge
+        loss = recon + perceptual + adv*0.1 + edge + (1-ssim)
 
         if ret_dict:
             loss_dict = {
                 "Recon": recon.item(),
                 "LPIPS": perceptual.item(),
-                # "DSSIM": dssim.item(),
+                "SSIM": ssim.item(),
                 "Edge": edge.item(),
                 "Adv": adv.item(),
-
             }
             return loss, loss_dict
         return loss
@@ -48,16 +50,17 @@ class GeneratorLoss(nn.Module):
         recon = self.recon(x, GT)
         perceptual = self.lpips(x, GT, normalize=True).mean()
         edge = self.edge(x, GT)
-        # dssim = self.dssim(x, GT)
+        ssim = self.ssim(x, GT)
+
         
-        loss = recon + perceptual + edge
+        loss = recon + perceptual + edge + (1-ssim)
 
         if ret_dict:
             loss_dict = {
                 "Recon": recon.item(),
                 "LPIPS": perceptual.item(),
                 "Edge": edge.item(),
-                # "DSSIM": dssim.item()
+                "SSIM": ssim.item()
             }
             return loss, loss_dict
         return loss
