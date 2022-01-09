@@ -21,7 +21,7 @@ class BasicGANTrainer():
         G: Net, D: Net,
         train_loader, valid_loader, unsup_loader,
         pretrain, epoch, now_time, log_interval=100,
-        save_path="./models", test_loader=None, is_rgb=False, n_stacks=1):
+        save_path="./models", test_loader=None, is_rgb=False, n_stacks=1, add_shadow_weight=0.):
         
         self.logger = logger
         self.model_name = model_name
@@ -61,6 +61,18 @@ class BasicGANTrainer():
         self.GetChs = (lambda x: x.cuda()) if is_rgb else (lambda x: x[:, [0]].cuda())
 
         self.n_stacks = max(n_stacks, 1)
+        self.add_shadow_weight = add_shadow_weight
+
+    def apply_weight(self, mask):
+        return mask*self.add_shadow_weight + 1.
+
+    def merge_image(self, x, f, r, num=1):
+        img = rearrange(
+            torch.stack((x[:num], f[:num], r[:num])),
+            'n b c h w -> (b h) (n w) c'
+        )
+        img = (img.detach().numpy()*255).astype(np.uint8) if self.is_rgb else TorchLab_RGB255(img)
+        return img
 
     def SaveModel(self, save_path, file_name):
         if not os.path.isdir(save_path):
@@ -101,7 +113,8 @@ class BasicGANTrainer():
             # Train D
             fake = self.G.get_features(x, skip_count=999)
             # lossG_recon = crit(fake, x)
-            loss = self.G.crit.recon(torch.cat(fake), torch.tile(x, (self.n_stacks, 1, 1, 1)))
+            # loss = self.G.crit.recon(torch.cat(fake), torch.tile(x, (self.n_stacks, 1, 1, 1))).mean()
+            loss = self.G.crit.compute_all_woadv(torch.cat(fake), torch.tile(x, (self.n_stacks, 1, 1, 1)), ret_dict=False)[0]
             self.G.step(loss)
             
             # Record
@@ -113,14 +126,6 @@ class BasicGANTrainer():
                     self.iteration, self.losser.mean(), is_update=False)
                 self.losser.clear()
     
-    def merge_image(self, x, f, r, num=1):
-        img = rearrange(
-            torch.stack((x[:num], f[:num], r[:num])),
-            'n b c h w -> (b h) (n w) c'
-        )
-        img = (img.detach().numpy()*255).astype(np.uint8) if self.is_rgb else TorchLab_RGB255(img)
-        return img
-    
 
     def EpochTrain(self, epoch):
         self.D.train()
@@ -131,7 +136,7 @@ class BasicGANTrainer():
             tqdm(self.train_loader, position=0, leave=True, dynamic_ncols=True),
             self.unsup_loader
             )):
-            x_, real_, sh = x
+            x_, real_, shadow_mask, sh = x
             
             real = self.GetChs(real_)
             x = self.GetChs(x_)
@@ -139,6 +144,7 @@ class BasicGANTrainer():
             # real = real_[:, [0]].cuda()
             # x = x_[:, [0]].cuda()
             # u = u[:, [0]].cuda()
+            shadow_mask = shadow_mask.cuda()
             sh = sh.cuda()
             
 
@@ -148,8 +154,8 @@ class BasicGANTrainer():
             fake = torch.cat(fake)
 
             prob_real = self.D(real)
-            # prob_real = self.D(u)
             prob_fake = self.D(fake.detach())
+            # prob_real = self.D(u)
 
             lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
             lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
@@ -158,7 +164,9 @@ class BasicGANTrainer():
 
             # Train G
             prob = self.D(fake)
-            loss, loss_dict = self.G.crit(fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob)
+            loss, loss_dict = self.G.crit(
+                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob,
+                weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
             # lossG_adv = self.D.crit(prob, label_real)
             # loss = lossG_recon + lossG_adv
             self.G.step(loss)
@@ -206,13 +214,15 @@ class BasicGANTrainer():
             tqdm(self.valid_loader, position=0, leave=True, dynamic_ncols=True),
             self.unsup_loader
             )):
-            x_, real_, sh = x
+            x_, real_, shadow_mask, sh = x
+            
             real = self.GetChs(real_)
             x = self.GetChs(x_)
             u = self.GetChs(u)
             # real = real_[:, [0]].cuda()
             # x = x_[:, [0]].cuda()
             # u = u[:, [0]].cuda()
+            shadow_mask = shadow_mask.cuda()
             sh = sh.cuda()
             
             fake = self.G.get_features(x, skip_count=self.open_skip)
@@ -224,7 +234,10 @@ class BasicGANTrainer():
             prob_fake = self.D(fake)
             lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
             lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
-            _, loss_dict = self.G.crit(fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob_fake)
+
+            _, loss_dict = self.G.crit(
+                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob_fake,
+                weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
             
             # Record
             loss_dict.update({

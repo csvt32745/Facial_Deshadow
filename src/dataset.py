@@ -106,8 +106,9 @@ class DPRShadowDataset_ColorJitter(DPRShadowDataset):
         super().__init__(root, img_list=img_list, n_lights=n_lights, size=size, intensity=intensity, k_size=k_size, is_rgb=is_rgb)
         # is_rgb is useless here
         # self.cj = torchvision.transforms.ColorJitter(brightness=(0.3, 1.0), contrast=(0.3), saturation=(0.5), hue=0.1)
-        self.cj = torchvision.transforms.ColorJitter(brightness=(0.3, 1.0), contrast=(0.3))
-        # self.morph_kernel = np.ones([(self.k_size[0]+k_size[1])//2*2+1]*2)
+        self.cj = torchvision.transforms.ColorJitter(brightness=(0.5, 1.0), contrast=(0.3))
+        # self.morph_kernel = np.ones([(self.k_size[0]+self.k_size[1])//2*2+1])
+        self.morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, [self.k_size[1]]*2)
 
     def __getitem__(self, idx):
         idx_light = "%02d" % (idx % self.n_lights)
@@ -138,8 +139,10 @@ class DPRShadowDataset_ColorJitter(DPRShadowDataset):
 
         mask_shadow = ((1-mask_shadow)*mask_face)[..., np.newaxis] # 1 for shadow
         img_shadow = (img_orig*(1-mask_shadow) + img_jitter*mask_shadow).astype(np.float32)
-        # mask_shadow = torch.from_numpy(cv2.dilate(mask_shadow.squeeze().astype(np.uint8)*255, self.morph_kernel)) > 1
-        return self.to_tensor(img_shadow), self.to_tensor(img_orig), sh_light
+        # t = mask_shadow.copy()
+        mask_shadow = (cv2.dilate((mask_shadow.squeeze()*255).astype(np.uint8), self.morph_kernel))/255.
+        # mask_shadow = np.clip(mask_shadow*5, 0, 1)
+        return self.to_tensor(img_shadow), self.to_tensor(img_orig), self.to_tensor(mask_shadow), sh_light
 
 
 class UnsupervisedDataset(Dataset):

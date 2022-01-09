@@ -127,7 +127,8 @@ def main(config):
         G, D, train_loader, valid_loader, unsup_loader,
         PRETRAIN_EPOCH, EPOCH,
         now_time, log_interval=len(train_loader)//2, 
-        save_path=config['save_model_path'], test_loader=test_loader, is_rgb=IS_RGB, n_stacks=N_STACKS
+        save_path=config['save_model_path'], test_loader=test_loader, 
+        is_rgb=IS_RGB, n_stacks=N_STACKS, add_shadow_weight=config['add_shadow_weight']
     )
     trainer.Train()
     

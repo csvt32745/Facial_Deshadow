@@ -15,44 +15,38 @@ class GeneratorLoss(nn.Module):
     def __init__(self, is_rgb=False, is_msssim=True):
         super().__init__()
         # self.recon = nn.MSELoss()
-        self.recon = nn.L1Loss()
+        self.recon = nn.L1Loss(reduction='none')
         self.edge = SobelLoss(self.recon, is_rgb)
         self.lpips = lpips.LPIPS(net='vgg')
         # self.ssim = 
-        self.ssim = MS_SSIM(data_range=1., size_average=True, channel=3) if is_msssim \
-            else SSIM(data_range=1., size_average=True, channel=3)
+        self.ssim = MS_SSIM(data_range=1., size_average=True, channel=3 if is_rgb else 1) if is_msssim \
+            else SSIM(data_range=1., size_average=True, channel=3 if is_rgb else 1)
         self.adv = NonSaturaingLoss()
 
         self.eval()
         
-    def forward(self, x, GT, prob, ret_dict=True):
+    def forward(self, x, GT, prob, weight=None, ret_dict=True):
         adv = self.adv(prob)
-        recon = self.recon(x, GT)
-        perceptual = self.lpips(x, GT, normalize=True).mean()
-        edge = self.edge(x, GT)
-        ssim = self.ssim(x, GT)
-
-        # loss = l2 + adv
-        loss = recon + perceptual + adv*0.1 + edge + (1-ssim)
+        loss, loss_dict = self.compute_all_woadv(x, GT, weight=weight, ret_dict=ret_dict)
+        loss = loss + adv*0.1
 
         if ret_dict:
-            loss_dict = {
-                "Recon": recon.item(),
-                "LPIPS": perceptual.item(),
-                "SSIM": ssim.item(),
-                "Edge": edge.item(),
-                "Adv": adv.item(),
-            }
-            return loss, loss_dict
-        return loss
+            loss_dict["Adv"] = adv.item()
+        
+        return loss, loss_dict
     
-    def compute_all_woadv(self, x, GT, ret_dict=True):
-        recon = self.recon(x, GT)
+    def compute_all_woadv(self, x, GT, weight=None, ret_dict=True):
+        # weight appliable
+        if weight is None:
+            recon = self.recon(x, GT).mean()
+            edge = self.edge(x, GT).mean()
+        else:
+            recon = (self.recon(x, GT) * weight).mean()
+            edge = (self.edge(x, GT) * weight).mean()
+        
         perceptual = self.lpips(x, GT, normalize=True).mean()
-        edge = self.edge(x, GT)
         ssim = self.ssim(x, GT)
 
-        
         loss = recon + perceptual + edge + (1-ssim)
 
         if ret_dict:
@@ -63,7 +57,7 @@ class GeneratorLoss(nn.Module):
                 "SSIM": ssim.item()
             }
             return loss, loss_dict
-        return loss
+        return loss, None
 
 class NonSaturaingLoss(nn.Module):
     def __init__(self):
