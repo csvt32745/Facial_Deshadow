@@ -52,7 +52,8 @@ class BasicGANTrainer():
         self.logger.LogNet(self.D.net, 'D')
 
         # from high to low, open_skip == N means openning the N-th inner layer
-        self.open_skip_epoch = [6, 10, 13, 15][::-1]
+        self.open_skip_epoch = [999]*4
+        # self.open_skip_epoch = [6, 10, 13, 15][::-1]
         # self.open_skip_epoch = [10, 15, 20, 25][::-1]
         self.open_skip = len(self.open_skip_epoch)
 
@@ -153,30 +154,32 @@ class BasicGANTrainer():
             fake_result = fake[-1]
             fake = torch.cat(fake)
 
-            prob_real = self.D(real)
-            prob_fake = self.D(fake.detach())
-            # prob_real = self.D(u)
+            # prob_real = self.D(real)
+            # prob_fake = self.D(fake.detach())
+            # # prob_real = self.D(u)
 
-            lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
-            lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
-            loss = lossD_fake + lossD_real
-            self.D.step(loss)
+            # lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
+            # lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
+            # loss = lossD_fake + lossD_real
+            # self.D.step(loss)
 
             # Train G
-            prob = self.D(fake)
-            loss, loss_dict = self.G.crit(
-                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob,
+            # prob = self.D(fake)
+            # loss, loss_dict = self.G.crit(
+            #     fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob,
+            #     weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
+
+            loss, loss_dict = self.G.crit.compute_all_woadv(
+                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)),
                 weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
-            # lossG_adv = self.D.crit(prob, label_real)
-            # loss = lossG_recon + lossG_adv
             self.G.step(loss)
             
             # Record
-            loss_dict.update({
-                "D_real": lossD_real.item(),
-                "D_fake": lossD_fake.item(),
-                # "G_adv": lossG_adv.item()
-            })
+            # loss_dict.update({
+            #     "D_real": lossD_real.item(),
+            #     "D_fake": lossD_fake.item(),
+            #     # "G_adv": lossG_adv.item()
+            # })
             self.losser.add(loss_dict)
 
             self.iteration += 1
@@ -229,21 +232,25 @@ class BasicGANTrainer():
             fake_result = fake[-1]
             fake = torch.cat(fake)
 
-            prob_real = self.D(real)
-            # prob_real = self.D(u)
-            prob_fake = self.D(fake)
-            lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
-            lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
+            # # prob_real = self.D(real)
+            # # # prob_real = self.D(u)
+            # # prob_fake = self.D(fake)
+            # # lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
+            # # lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
 
-            _, loss_dict = self.G.crit(
-                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob_fake,
+            # _, loss_dict = self.G.crit(
+            #     fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob_fake,
+            #     weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
+
+            _, loss_dict = self.G.crit.compute_all_woadv(
+                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)),
                 weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
-            
+
             # Record
-            loss_dict.update({
-                "D_real": lossD_real.item(),
-                "D_fake": lossD_fake.item(),
-            })
+            # loss_dict.update({
+            #     "D_real": lossD_real.item(),
+            #     "D_fake": lossD_fake.item(),
+            # })
             self.losser.add(loss_dict)
 
             if log_flg:

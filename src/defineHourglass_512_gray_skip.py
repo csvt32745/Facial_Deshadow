@@ -1,5 +1,6 @@
 import torch
 from torch.autograd import Variable
+from torch.cuda import init
 import torch.nn as nn
 import torch.nn.functional as F
 import sys
@@ -141,9 +142,10 @@ class HourglassNet(nn.Module):
     	            lighting should be estimated from the inner most layer
         NOTE: we split the bottle neck layer into albedo, normal and lighting
     '''
-    def __init__(self, ch_in=3, n_out_layers=2, baseFilter = 16, gray=True):
+    def __init__(self, ch_in=3, n_out_layers=2, baseFilter = 16, gray=True, ch_out = 0):
         super(HourglassNet, self).__init__()
-        ch_out = ch_in
+        if ch_out < 1:
+            ch_out = ch_in
         self.ncLight = 27   # number of channels for input to lighting network
         self.baseFilter = baseFilter
 
@@ -202,11 +204,29 @@ class HourglassNet(nn.Module):
     def get_features(self, *args, **kwargs):
         return [self.forward(*args, **kwargs)]
 
+class HourglassNetExquotient(HourglassNet):
+    def __init__(self, ch_in=3, n_out_layers=2, baseFilter=16, gray=True):
+        super().__init__(ch_in=ch_in, ch_out=ch_in*2, n_out_layers=n_out_layers, baseFilter=baseFilter, gray=gray)
+        self.ch = ch_in
+    
+    def forward(self, x, skip_count=0):
+        feat = self.pre_conv(x)
+        feat = F.relu(self.pre_bn(feat))
+
+        feat = self.HG3(feat, 0, skip_count)
+        
+        feat = self.out_conv(feat)
+        gain, bias = torch.split(self.output(feat), (self.ch, self.ch), dim=1)
+        return torch.sigmoid(x*gain + bias)
+
+    def get_features(self, *args, **kwargs):
+        return [self.forward(*args, **kwargs)]
+
 class SimpleStackedHourglassNet(nn.Module):
-    def __init__(self, n_stacks, ch_in=3, n_out_layers=0, baseFilter = 16, gray=True):
+    def __init__(self, n_stacks, ch_in=3, n_out_layers=0, baseFilter = 16, gray=True, net_class=HourglassNet):
         super().__init__()
         self.n_stacks = n_stacks
-        self.net = nn.ModuleList([HourglassNet(ch_in, n_out_layers, baseFilter, gray) for i in range(n_stacks)])
+        self.net = nn.ModuleList([net_class(ch_in, n_out_layers, baseFilter, gray) for i in range(n_stacks)])
 
     def forward(self, x, skip_count=0):
         out = x
@@ -223,10 +243,10 @@ class SimpleStackedHourglassNet(nn.Module):
         return out # n_stacks, B, C, H, W
 
 class RecursiveStackedHourglassNet(nn.Module):
-    def __init__(self, n_stacks, ch_in=3, n_out_layers=0, baseFilter = 16, gray=True):
+    def __init__(self, n_stacks, ch_in=3, n_out_layers=0, baseFilter = 16, gray=True, net_class=HourglassNet):
         super().__init__()
         self.n_stacks = n_stacks
-        self.net = HourglassNet(ch_in, n_out_layers, baseFilter, gray)
+        self.net = net_class(ch_in, n_out_layers, baseFilter, gray)
 
     def forward(self, x, skip_count=0):
         out = x

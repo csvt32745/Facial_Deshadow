@@ -18,7 +18,7 @@ from src.logger import WBLogger
 from src.dataset import DPRShadowDataset, DPRShadowDataset_ColorJitter, UnsupervisedDataset
 from src.train_code import BasicGANTrainer
 from src.network import *
-from src.defineHourglass_512_gray_skip import HourglassNet, RecursiveStackedHourglassNet, SimpleStackedHourglassNet
+from src.defineHourglass_512_gray_skip import HourglassNet, HourglassNetExquotient, RecursiveStackedHourglassNet, SimpleStackedHourglassNet
 from src.loss_func import GeneratorLoss
 
 def set_seed(seed):
@@ -53,6 +53,7 @@ def main(config):
     IS_RGB = config['is_rgb'] or config['is_colorjitter']
     N_STACKS = config['n_stacks']
     IS_RECUR_STACK = config['is_recursive_stack']
+    IS_OUT_GAIN_BIAS = config['is_out_gainbias']
 
     opt_func = lambda net: optim.AdamW(filter(lambda p: p.requires_grad, net.parameters()), lr = LR)
     # sch_func = lambda opt: optim.lr_scheduler.MultiStepLR(opt, milestones=[5], gamma = 0.2)
@@ -60,10 +61,16 @@ def main(config):
     
     ch_in = 3 if IS_RGB else 1
     ch_bottleneck = 32
+    G_NET = HourglassNetExquotient if IS_OUT_GAIN_BIAS else HourglassNet
     G = Net(
-        HourglassNet(ch_in=ch_in, baseFilter=ch_bottleneck) if N_STACKS <= 1 \
-            else RecursiveStackedHourglassNet(n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck) if IS_RECUR_STACK \
-            else SimpleStackedHourglassNet(n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck),
+        G_NET(ch_in=ch_in, baseFilter=ch_bottleneck) if N_STACKS <= 1 \
+        # HourglassNet(ch_in=ch_in, baseFilter=ch_bottleneck) if N_STACKS <= 1 \
+            else RecursiveStackedHourglassNet(
+                n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck, net_class=G_NET
+            ) if IS_RECUR_STACK \
+            else SimpleStackedHourglassNet(
+                n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck, net_class=G_NET
+            ),
         opt_func, GeneratorLoss(is_rgb=IS_RGB), scheduler_func=sch_func
     )
     D = Net(
