@@ -52,8 +52,8 @@ class BasicGANTrainer():
         self.logger.LogNet(self.D.net, 'D')
 
         # from high to low, open_skip == N means openning the N-th inner layer
-        self.open_skip_epoch = [999]*4
-        # self.open_skip_epoch = [6, 10, 13, 15][::-1]
+        # self.open_skip_epoch = [999]*4
+        self.open_skip_epoch = [6, 10, 13, 15][::-1]
         # self.open_skip_epoch = [10, 15, 20, 25][::-1]
         self.open_skip = len(self.open_skip_epoch)
 
@@ -112,7 +112,7 @@ class BasicGANTrainer():
             x = self.GetChs(x)
             
             # Train D
-            fake = self.G.get_features(x, skip_count=999)
+            fake, _ = self.G.get_features(x, skip_count=999)
             # lossG_recon = crit(fake, x)
             # loss = self.G.crit.recon(torch.cat(fake), torch.tile(x, (self.n_stacks, 1, 1, 1))).mean()
             loss = self.G.crit.compute_all_woadv(torch.cat(fake), torch.tile(x, (self.n_stacks, 1, 1, 1)), ret_dict=False)[0]
@@ -150,36 +150,38 @@ class BasicGANTrainer():
             
 
             # Train D
-            fake = self.G.get_features(x, skip_count=self.open_skip)
+            fake, fake_bottleneck = self.G.get_features(x, skip_count=self.open_skip)
             fake_result = fake[-1]
             fake = torch.cat(fake)
+            fake_bottleneck = torch.cat(fake_bottleneck)
 
-            # prob_real = self.D(real)
-            # prob_fake = self.D(fake.detach())
-            # # prob_real = self.D(u)
-
-            # lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
-            # lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
-            # loss = lossD_fake + lossD_real
-            # self.D.step(loss)
+            real_bottleneck = self.G.get_bottlenecks(u, skip_count=self.open_skip)
+            real_bottleneck = torch.cat(real_bottleneck)
+            prob_real = self.D(real_bottleneck.detach())
+            prob_fake = self.D(fake_bottleneck.detach())
+            
+            label_real = torch.ones_like(prob_real, device='cuda')
+            label_fake = torch.zeros_like(prob_fake, device='cuda')
+            lossD_real = self.D.crit(prob_real, label_real)
+            lossD_fake = self.D.crit(prob_fake, label_fake)
+            loss = lossD_fake + lossD_real
+            self.D.step(loss)
 
             # Train G
-            # prob = self.D(fake)
-            # loss, loss_dict = self.G.crit(
-            #     fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob,
-            #     weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
-
-            loss, loss_dict = self.G.crit.compute_all_woadv(
-                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)),
+            prob = self.D(torch.cat([real_bottleneck, fake_bottleneck]))
+            prob_gt = torch.cat([label_real, label_fake])
+            
+            loss, loss_dict = self.G.crit(
+                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), (prob, prob_gt),
                 weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
             self.G.step(loss)
             
             # Record
-            # loss_dict.update({
-            #     "D_real": lossD_real.item(),
-            #     "D_fake": lossD_fake.item(),
-            #     # "G_adv": lossG_adv.item()
-            # })
+            loss_dict.update({
+                "D_real": lossD_real.item(),
+                "D_fake": lossD_fake.item(),
+                # "G_adv": lossG_adv.item()
+            })
             self.losser.add(loss_dict)
 
             self.iteration += 1
@@ -227,30 +229,33 @@ class BasicGANTrainer():
             # u = u[:, [0]].cuda()
             shadow_mask = shadow_mask.cuda()
             sh = sh.cuda()
-            
-            fake = self.G.get_features(x, skip_count=self.open_skip)
+    
+            fake, fake_bottleneck = self.G.get_features(x, skip_count=self.open_skip)
             fake_result = fake[-1]
             fake = torch.cat(fake)
+            fake_bottleneck = torch.cat(fake_bottleneck)
 
-            # # prob_real = self.D(real)
-            # # # prob_real = self.D(u)
-            # # prob_fake = self.D(fake)
-            # # lossD_real = self.D.crit(prob_real, torch.ones_like(prob_real, device='cuda'))
-            # # lossD_fake = self.D.crit(prob_fake, torch.zeros_like(prob_fake, device='cuda'))
-
-            # _, loss_dict = self.G.crit(
-            #     fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), prob_fake,
-            #     weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
-
-            _, loss_dict = self.G.crit.compute_all_woadv(
-                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)),
+            real_bottleneck = self.G.get_bottlenecks(u, skip_count=self.open_skip)
+            real_bottleneck = torch.cat(real_bottleneck)
+            
+            prob_real = self.D(real_bottleneck.detach())
+            prob_fake = self.D(fake_bottleneck.detach())
+            label_real = torch.ones_like(prob_real, device='cuda')
+            label_fake = torch.zeros_like(prob_fake, device='cuda')
+            lossD_real = self.D.crit(prob_real, label_real)
+            lossD_fake = self.D.crit(prob_fake, label_fake)
+            
+            prob = torch.cat([prob_real, prob_fake])
+            prob_gt = torch.cat([label_real, label_fake])
+            _, loss_dict = self.G.crit(
+                fake, torch.tile(real, (self.n_stacks, 1, 1, 1)), (prob, prob_gt),
                 weight=torch.tile(self.apply_weight(shadow_mask), (self.n_stacks, 1, 1, 1)))
 
             # Record
-            # loss_dict.update({
-            #     "D_real": lossD_real.item(),
-            #     "D_fake": lossD_fake.item(),
-            # })
+            loss_dict.update({
+                "D_real": lossD_real.item(),
+                "D_fake": lossD_fake.item(),
+            })
             self.losser.add(loss_dict)
 
             if log_flg:
@@ -281,7 +286,8 @@ class BasicGANTrainer():
         inputs = []
         for i, x in enumerate(tqdm(self.test_loader, position=0, leave=True, dynamic_ncols=True)):
             fake = x.clone()
-            res = self.G(self.GetChs(x), skip_count=self.open_skip).cpu()
+            res, _ = self.G(self.GetChs(x), skip_count=self.open_skip)
+            res = res.cpu()
             if self.is_rgb:
                 fake = res
             else:

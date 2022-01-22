@@ -8,25 +8,24 @@ import numpy as np
 from types import MethodType
 import cv2
 import lpips
-from einops import rearrange
 from pytorch_msssim import SSIM, MS_SSIM
 
 class GeneratorLoss(nn.Module):
-    def __init__(self, is_rgb=False, is_msssim=True):
+    def __init__(self, is_rgb=False, is_msssim=False):
         super().__init__()
-        # self.recon = nn.MSELoss()
         self.recon = nn.L1Loss(reduction='none')
+        # self.recon = nn.MSELoss(reduction='none')
         self.edge = SobelLoss(self.recon, is_rgb)
         self.lpips = lpips.LPIPS(net='vgg')
         # self.ssim = 
         self.ssim = MS_SSIM(data_range=1., size_average=True, channel=3 if is_rgb else 1) if is_msssim \
             else SSIM(data_range=1., size_average=True, channel=3 if is_rgb else 1)
-        self.adv = NonSaturaingLoss()
+        self.adv = ReverseGradient()
 
         self.eval()
         
     def forward(self, x, GT, prob, weight=None, ret_dict=True):
-        adv = self.adv(prob)
+        adv = self.adv(*prob)
         loss, loss_dict = self.compute_all_woadv(x, GT, weight=weight, ret_dict=ret_dict)
         loss = loss + adv*0.1
 
@@ -62,12 +61,27 @@ class GeneratorLoss(nn.Module):
 class NonSaturaingLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.loss_fn = nn.MSELoss()
+        # self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.BCEWithLogitsLoss()
 
     def forward(self, x):
         # return (-torch.log(torch.sigmoid(x))).mean(dim=[1, 2, 3]).mean()
         # TEST
-        return self.loss_fn(x, torch.ones_like(x, device='cuda'))
+        # return self.loss_fn(x, torch.ones_like(x, device='cuda'))
+        return -self.loss_fn(x, torch.zeros_like(x, device='cuda'))
+
+class ReverseGradient(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.BCEWithLogitsLoss()
+
+    def forward(self, x, y):
+        # return (-torch.log(torch.sigmoid(x))).mean(dim=[1, 2, 3]).mean()
+        # TEST
+        # return self.loss_fn(x, torch.ones_like(x, device='cuda'))
+        return -self.loss_fn(x, y)
+
 
 class SobelLoss(nn.Module):
     def __init__(self, loss_fn, is_rgb=False):

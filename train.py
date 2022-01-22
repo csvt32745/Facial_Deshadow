@@ -18,7 +18,7 @@ from src.logger import WBLogger
 from src.dataset import DPRShadowDataset, DPRShadowDataset_ColorJitter, UnsupervisedDataset
 from src.train_code import BasicGANTrainer
 from src.network import *
-from src.defineHourglass_512_gray_skip import HourglassNet, HourglassNetExquotient, RecursiveStackedHourglassNet, SimpleStackedHourglassNet
+from src.defineHourglass_512_gray_skip import HourglassNet, HourglassNetExquotient, RecursiveStackedHourglassNet, SimpleStackedHourglassNet, StackedHourglassNet
 from src.loss_func import GeneratorLoss
 
 def set_seed(seed):
@@ -28,9 +28,9 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.enabled = False
+    # torch.backends.cudnn.enabled = False
 
 def main(config):
     now_time = datetime.now().strftime("%Y_%m%d_%I:%M:%S")
@@ -50,17 +50,20 @@ def main(config):
     EPOCH = config['epoch']
     PRETRAIN_EPOCH = config['pretrain_epoch']
     BATCH_SIZE = config['batch_size']
-    IS_RGB = config['is_rgb'] or config['is_colorjitter']
+    COLOR_JITTER = config['color_jitter']
+    IS_RGB = config['is_rgb'] or bool(COLOR_JITTER)
     N_STACKS = config['n_stacks']
     IS_RECUR_STACK = config['is_recursive_stack']
     IS_OUT_GAIN_BIAS = config['is_out_gainbias']
+    KERNELRATIO = (config['kernelratio_low'], config['kernelratio_high'])
+    INTENSITY = (config['intensity_low'], config['intensity_high'])
 
     opt_func = lambda net: optim.AdamW(filter(lambda p: p.requires_grad, net.parameters()), lr = LR)
     # sch_func = lambda opt: optim.lr_scheduler.MultiStepLR(opt, milestones=[5], gamma = 0.2)
     sch_func = lambda opt: optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCH, eta_min=1e-6, verbose=True)
     
     ch_in = 3 if IS_RGB else 1
-    ch_bottleneck = 32
+    ch_bottleneck = config['ch_bottleneck']
     G_NET = HourglassNetExquotient if IS_OUT_GAIN_BIAS else HourglassNet
     G = Net(
         G_NET(ch_in=ch_in, baseFilter=ch_bottleneck) if N_STACKS <= 1 \
@@ -68,16 +71,18 @@ def main(config):
             else RecursiveStackedHourglassNet(
                 n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck, net_class=G_NET
             ) if IS_RECUR_STACK \
-            else SimpleStackedHourglassNet(
-                n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck, net_class=G_NET
+            else StackedHourglassNet(
+                n_stacks=N_STACKS, ch_in=ch_in, baseFilter=ch_bottleneck
             ),
         opt_func, GeneratorLoss(is_rgb=IS_RGB), scheduler_func=sch_func
     )
     D = Net(
-        NLayerDiscriminator(ch_in, ndf=64),
+        # NLayerDiscriminator(ch_in, ndf=64),
+        # NLayerDiscriminator(256, ndf=64, n_layers=2),
         # ResNet(models.resnet18(pretrained=True)),
-        # TEST nn.BCEWithLogitsLoss() -> MSE
-        opt_func, nn.MSELoss(), scheduler_func=sch_func
+        DomainClassifier(ch_in=G.net.ch_bottleneck, w=256//16//(2 if N_STACKS > 1 else 1)),
+        # TEST nn.BCEWithLogitsLoss() or nn.MSELoss()
+        opt_func, nn.BCEWithLogitsLoss(), scheduler_func=sch_func
     )
     try:
         if config['model_path']:
@@ -99,8 +104,8 @@ def main(config):
     G = G.cuda()
     D = D.cuda()
 
-    def get_dataloader(batch_size, shuffle, n_workers, dataset):
-        dataloader = DataLoader(dataset, batch_size, shuffle, num_workers=n_workers, pin_memory=True)
+    def get_dataloader(batch_size, shuffle, n_workers, dataset, pin_memory=False):
+        dataloader = DataLoader(dataset, batch_size, shuffle, num_workers=n_workers, pin_memory=pin_memory)
         return dataloader
 
     n_workers = 16
@@ -109,19 +114,19 @@ def main(config):
         for k in data_split:
             data_split[k] = data_split[k][:int(config['smaller_dataset']*len(data_split[k]))]
 
-    DPRDATASET = DPRShadowDataset_ColorJitter if config['is_colorjitter'] else DPRShadowDataset
+    DPRDATASET = DPRShadowDataset_ColorJitter if bool(COLOR_JITTER) else DPRShadowDataset
     train_loader = get_dataloader(BATCH_SIZE, True, n_workers,
         DPRDATASET(config['dataset_path'], data_split['train'] if data_split else None,
-            k_size=(config['kernelratio_low'], config['kernelratio_high']),
-            intensity=(config['intensity_low'], config['intensity_high']),
-            is_rgb=IS_RGB,
+            k_size=KERNELRATIO,
+            intensity=INTENSITY,
+            is_rgb=IS_RGB, mode=COLOR_JITTER
         )
     )
     valid_loader = get_dataloader(BATCH_SIZE, False, n_workers, 
         DPRDATASET(config['dataset_path'], data_split['valid'] if data_split else None,
-            k_size=(config['kernelratio_low'], config['kernelratio_high']),
-            intensity=(config['intensity_low'], config['intensity_high']),
-            is_rgb=IS_RGB,
+            k_size=KERNELRATIO,
+            intensity=INTENSITY,
+            is_rgb=IS_RGB, mode=COLOR_JITTER
         )
     )
     unsup_loader = get_dataloader(BATCH_SIZE, True, n_workers, UnsupervisedDataset('ffhq', is_rgb=IS_RGB))
